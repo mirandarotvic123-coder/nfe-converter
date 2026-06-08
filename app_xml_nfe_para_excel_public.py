@@ -285,19 +285,25 @@ def gerar_excel(df, df_erros):
 
 st.set_page_config(page_title="Conversor XML NF-e para Excel - Countout Co.", layout="wide")
 st.title("📄 Conversor de XML de notas fiscais para Excel")
-st.caption(
-    "Envie aqui os arquivos. "
-    "O relatório sai com uma linha por item da nota."
-)
+st.caption("Envie aqui os arquivos. O relatório sai com uma linha por item da nota.")
+
+if "resetar" not in st.session_state:
+    st.session_state.resetar = False
+
+if st.session_state.resetar:
+    st.session_state.resetar = False
+    st.rerun()
 
 uploaded = st.file_uploader(
     "Selecione os arquivos",
     type=["zip", "xml"],
     accept_multiple_files=True,
+    key="uploader",
 )
 
 if uploaded:
     if st.button("🔄 Limpar e recomeçar"):
+        st.session_state.resetar = True
         st.rerun()
 
     with st.spinner("Lendo arquivos..."):
