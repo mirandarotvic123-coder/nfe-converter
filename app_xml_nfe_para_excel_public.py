@@ -297,7 +297,9 @@ def parse_xml_nfe(xml_bytes, nome_arquivo, pasta):
 
 
 def ler_uploads(uploaded_files):
+    import hashlib
     arquivos = []
+    hashes_vistos = set()
     for up in uploaded_files:
         data = up.read()
         nome = up.name
@@ -305,10 +307,18 @@ def ler_uploads(uploaded_files):
             with zipfile.ZipFile(io.BytesIO(data)) as zf:
                 for item in zf.namelist():
                     if item.lower().endswith(".xml"):
+                        conteudo = zf.read(item)
+                        h = hashlib.md5(conteudo).hexdigest()
+                        if h in hashes_vistos:
+                            continue
+                        hashes_vistos.add(h)
                         pasta = os.path.dirname(item) or "raiz"
-                        arquivos.append((pasta, os.path.basename(item), zf.read(item)))
+                        arquivos.append((pasta, os.path.basename(item), conteudo))
         elif nome.lower().endswith(".xml"):
-            arquivos.append(("avulso", nome, data))
+            h = hashlib.md5(data).hexdigest()
+            if h not in hashes_vistos:
+                hashes_vistos.add(h)
+                arquivos.append(("avulso", nome, data))
     return arquivos
 
 
@@ -389,12 +399,27 @@ if uploaded:
         df_eventos = pd.DataFrame(linhas_eventos, columns=COLUNAS_EVENTOS) if linhas_eventos else pd.DataFrame(columns=COLUNAS_EVENTOS)
         df_erros = pd.DataFrame(linhas_erros)
 
-        st.success(
+        # Deduplicação por chave de acesso + número do item (NF-e)
+        total_antes = len(df_nfe)
+        if not df_nfe.empty:
+            df_nfe = df_nfe.drop_duplicates(subset=["chave_acesso", "n_item"], keep="first")
+        duplicadas_nfe = total_antes - len(df_nfe)
+
+        # Deduplicação por chave + tipo de evento + protocolo
+        total_ev_antes = len(df_eventos)
+        if not df_eventos.empty:
+            df_eventos = df_eventos.drop_duplicates(subset=["chave_nfe", "tipo_evento", "numero_protocolo"], keep="first")
+        duplicadas_ev = total_ev_antes - len(df_eventos)
+
+        msg = (
             f"✅ Total: {total} XML(s) | "
             f"Notas fiscais: {len(df_nfe)} linhas | "
             f"Eventos/cancelamentos: {len(df_eventos)} | "
             f"Erros: {len(df_erros)}"
         )
+        if duplicadas_nfe > 0 or duplicadas_ev > 0:
+            msg += f" | ⚠️ Duplicatas removidas: {duplicadas_nfe} notas + {duplicadas_ev} eventos"
+        st.success(msg)
 
         tab1, tab2 = st.tabs(["📋 Notas Fiscais", "🚫 Eventos e Cancelamentos"])
 
