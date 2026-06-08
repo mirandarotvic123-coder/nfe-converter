@@ -283,10 +283,10 @@ def gerar_excel(df, df_erros):
 
 # ── Interface ──────────────────────────────────────────────────────────────────
 
-st.set_page_config(page_title="Conversor XML NF-e para Excel", layout="wide")
+st.set_page_config(page_title="Conversor XML NF-e para Excel - Countout Co.", layout="wide")
 st.title("📄 Conversor de XML de notas fiscais para Excel")
 st.caption(
-    "Envie aqui os arquivos "
+    "Envie aqui os arquivos. "
     "O relatório sai com uma linha por item da nota."
 )
 
