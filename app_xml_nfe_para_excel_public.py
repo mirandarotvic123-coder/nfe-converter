@@ -2,11 +2,6 @@
 # Como usar localmente:
 #   1) pip install streamlit pandas openpyxl
 #   2) streamlit run app_xml_nfe_para_excel.py
-#
-# Como publicar (Streamlit Cloud):
-#   1) Suba este arquivo + requirements.txt num repositório GitHub
-#   2) Acesse share.streamlit.io e conecte o repositório
-#   3) Compartilhe o link gerado
 
 import io
 import os
@@ -243,7 +238,6 @@ def parse_xml_nfe(xml_bytes, nome_arquivo="arquivo.xml"):
 
 
 def ler_uploads(uploaded_files):
-    """Aceita XMLs avulsos e ZIPs (com subpastas de qualquer profundidade)."""
     arquivos_xml = []
     for up in uploaded_files:
         data = up.read()
@@ -304,6 +298,9 @@ uploaded = st.file_uploader(
 )
 
 if uploaded:
+    if st.button("🔄 Limpar e recomeçar"):
+        st.rerun()
+
     with st.spinner("Lendo arquivos..."):
         arquivos = ler_uploads(uploaded)
 
