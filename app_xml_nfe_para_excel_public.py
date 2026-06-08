@@ -1,7 +1,7 @@
-# app_xml_nfe_para_excel.py
+# app_xml_nfe_para_excel_public.py
 # Como usar localmente:
 #   1) pip install streamlit pandas openpyxl
-#   2) streamlit run app_xml_nfe_para_excel.py
+#   2) streamlit run app_xml_nfe_para_excel_public.py
 
 import io
 import os
@@ -13,7 +13,7 @@ import pandas as pd
 import streamlit as st
 
 COLUNAS = [
-    'arquivo_xml', 'tipo_documento', 'chave_acesso', 'modelo', 'serie', 'numero_nf',
+    'pasta', 'arquivo_xml', 'tipo_documento', 'chave_acesso', 'modelo', 'serie', 'numero_nf',
     'data_emissao', 'data_saida_entrada', 'tipo_operacao', 'natureza_operacao', 'finalidade',
     'ambiente', 'status_protocolo', 'protocolo_autorizacao', 'emitente_cnpj_cpf',
     'emitente_razao_social', 'emitente_nome_fantasia', 'emitente_ie', 'emitente_crt',
@@ -31,6 +31,12 @@ COLUNAS = [
     'valor_icms_total_nf', 'valor_ipi_total_nf', 'valor_pis_total_nf', 'valor_cofins_total_nf',
     'transportador_cnpj_cpf', 'transportador_nome', 'modalidade_frete', 'placa_veiculo',
     'uf_veiculo', 'peso_bruto', 'peso_liquido', 'informacoes_complementares'
+]
+
+COLUNAS_EVENTOS = [
+    'pasta', 'arquivo_xml', 'tipo_evento', 'chave_nfe', 'cnpj_autor',
+    'data_evento', 'numero_protocolo', 'status_evento', 'descricao_status',
+    'justificativa'
 ]
 
 
@@ -86,16 +92,64 @@ def detectar_tipo(modelo):
     return "XML fiscal"
 
 
-def parse_xml_nfe(xml_bytes, nome_arquivo="arquivo.xml"):
+def parse_evento(xml_bytes, nome_arquivo, pasta):
+    """Extrai dados de XMLs de eventos (cancelamento, carta de correção, etc.)"""
+    try:
+        root = ET.fromstring(xml_bytes)
+        root = limpar_namespace(root)
+    except Exception:
+        return []
+
+    linhas = []
+    eventos = root.findall(".//infEvento")
+    for inf in eventos:
+        tipo_cod = txt(inf, "tpEvento")
+        tipo_desc = {
+            "110111": "Cancelamento",
+            "110110": "Carta de Correção",
+            "110112": "Cancelamento por Substituição",
+            "110114": "EPEC",
+            "210200": "Ciência da Operação",
+            "210210": "Confirmação da Operação",
+            "210220": "Desconhecimento da Operação",
+            "210240": "Operação não Realizada",
+        }.get(tipo_cod, f"Evento {tipo_cod}")
+
+        det = inf.find("detEvento")
+        justificativa = txt(det, "xJust") if det is not None else ""
+
+        ret = root.find(".//infProt") or root.find(".//retEvento/infEvento")
+
+        linhas.append({
+            "pasta": pasta,
+            "arquivo_xml": nome_arquivo,
+            "tipo_evento": tipo_desc,
+            "chave_nfe": txt(inf, "chNFe"),
+            "cnpj_autor": txt(inf, "CNPJ") or txt(inf, "CPF"),
+            "data_evento": txt(inf, "dhEvento"),
+            "numero_protocolo": txt(ret, "nProt") if ret is not None else "",
+            "status_evento": txt(ret, "cStat") if ret is not None else "",
+            "descricao_status": txt(ret, "xMotivo") if ret is not None else "",
+            "justificativa": justificativa,
+        })
+    return linhas
+
+
+def parse_xml_nfe(xml_bytes, nome_arquivo, pasta):
     try:
         root = ET.fromstring(xml_bytes)
         root = limpar_namespace(root)
     except Exception as e:
-        return [], [{"arquivo_xml": nome_arquivo, "erro": f"XML inválido: {e}"}]
+        return [], [], [{"pasta": pasta, "arquivo_xml": nome_arquivo, "erro": f"XML inválido: {e}"}]
+
+    # Verificar se é evento
+    if root.find(".//infEvento") is not None:
+        eventos = parse_evento(xml_bytes, nome_arquivo, pasta)
+        return [], eventos, []
 
     inf_nfe = root.find(".//infNFe")
     if inf_nfe is None:
-        return [], [{"arquivo_xml": nome_arquivo, "erro": "Não é NF-e (evento de cancelamento ou outro tipo) — ignorado."}]
+        return [], [], [{"pasta": pasta, "arquivo_xml": nome_arquivo, "erro": "Formato não reconhecido."}]
 
     ide = inf_nfe.find("ide")
     emit = inf_nfe.find("emit")
@@ -128,6 +182,7 @@ def parse_xml_nfe(xml_bytes, nome_arquivo="arquivo.xml"):
     }.get(mod_frete_val, mod_frete_val)
 
     capa = {
+        "pasta": pasta,
         "arquivo_xml": nome_arquivo,
         "tipo_documento": detectar_tipo(modelo),
         "chave_acesso": chave,
@@ -180,7 +235,7 @@ def parse_xml_nfe(xml_bytes, nome_arquivo="arquivo.xml"):
     if not detalhes:
         linha = {col: "" for col in COLUNAS}
         linha.update(capa)
-        return [linha], []
+        return [linha], [], []
 
     linhas = []
     for det in detalhes:
@@ -234,11 +289,12 @@ def parse_xml_nfe(xml_bytes, nome_arquivo="arquivo.xml"):
             "valor_cofins": num(txt(cofins_grupo, "vCOFINS")),
         })
         linhas.append(linha)
-    return linhas, []
+    return linhas, [], []
 
 
 def ler_uploads(uploaded_files):
-    arquivos_xml = []
+    """Retorna lista de (pasta, nome_arquivo, bytes)"""
+    arquivos = []
     for up in uploaded_files:
         data = up.read()
         nome = up.name
@@ -246,37 +302,45 @@ def ler_uploads(uploaded_files):
             with zipfile.ZipFile(io.BytesIO(data)) as zf:
                 for item in zf.namelist():
                     if item.lower().endswith(".xml"):
+                        pasta = os.path.dirname(item) or "raiz"
                         nome_xml = os.path.basename(item)
-                        arquivos_xml.append((nome_xml, zf.read(item)))
+                        arquivos.append((pasta, nome_xml, zf.read(item)))
         elif nome.lower().endswith(".xml"):
-            arquivos_xml.append((nome, data))
-    return arquivos_xml
+            arquivos.append(("avulso", nome, data))
+    return arquivos
 
 
-def gerar_excel(df, df_erros):
+def estilo_aba(ws, cor_cabecalho="1F4E78"):
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = ws.dimensions
+    for col_cells in ws.columns:
+        header = str(col_cells[0].value or "")
+        max_len = max(len(str(c.value)) if c.value is not None else 0 for c in col_cells[:200])
+        width = min(max(max_len + 2, 12), 42)
+        if any(x in header for x in ["descricao", "razao", "informacoes", "natureza", "justificativa"]):
+            width = 38
+        ws.column_dimensions[col_cells[0].column_letter].width = width
+    for cell in ws[1]:
+        cell.font = cell.font.copy(bold=True, color="FFFFFF")
+        cell.fill = cell.fill.copy(fill_type="solid", fgColor=cor_cabecalho)
+
+
+def gerar_excel(df_nfe, df_eventos, df_erros):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Relatorio_XML")
+        df_nfe.to_excel(writer, index=False, sheet_name="Notas_Fiscais")
+        if not df_eventos.empty:
+            df_eventos.to_excel(writer, index=False, sheet_name="Eventos_Cancelamentos")
         if not df_erros.empty:
-            df_erros.to_excel(writer, index=False, sheet_name="Erros_XML")
-        workbook = writer.book
-        ws = workbook["Relatorio_XML"]
-        ws.freeze_panes = "A2"
-        ws.auto_filter.ref = ws.dimensions
-        for col_cells in ws.columns:
-            header = str(col_cells[0].value or "")
-            max_len = max(len(str(cell.value)) if cell.value is not None else 0 for cell in col_cells[:200])
-            width = min(max(max_len + 2, 12), 42)
-            if any(x in header for x in ["descricao", "razao", "informacoes", "natureza"]):
-                width = 38
-            ws.column_dimensions[col_cells[0].column_letter].width = width
-        for cell in ws[1]:
-            cell.font = cell.font.copy(bold=True, color="FFFFFF")
-            cell.fill = cell.fill.copy(fill_type="solid", fgColor="1F4E78")
+            df_erros.to_excel(writer, index=False, sheet_name="Erros")
+
+        wb = writer.book
+        estilo_aba(wb["Notas_Fiscais"], "1F4E78")
+        if not df_eventos.empty:
+            estilo_aba(wb["Eventos_Cancelamentos"], "7B2D00")
         if not df_erros.empty:
-            we = workbook["Erros_XML"]
-            we.freeze_panes = "A2"
-            we.auto_filter.ref = we.dimensions
+            estilo_aba(wb["Erros"], "5C0000")
+
     output.seek(0)
     return output
 
@@ -284,14 +348,14 @@ def gerar_excel(df, df_erros):
 # ── Interface ──────────────────────────────────────────────────────────────────
 
 st.set_page_config(page_title="Conversor XML NF-e para Excel - Countout Co.", layout="wide")
-st.title("📄 Conversor de XML de notas fiscais para Excel - Countout Co.")
+st.title("📄 Conversor de XML de notas fiscais para Excel")
 st.caption("Envie aqui os arquivos. O relatório sai com uma linha por item da nota.")
 
 if "upload_key" not in st.session_state:
     st.session_state.upload_key = 0
 
 uploaded = st.file_uploader(
-    "Selecione os arquivos",
+    "Selecione os arquivos (ZIP ou XMLs avulsos)",
     type=["zip", "xml"],
     accept_multiple_files=True,
     key=f"uploader_{st.session_state.upload_key}",
@@ -308,38 +372,45 @@ if uploaded:
     if not arquivos:
         st.error("Nenhum arquivo .xml encontrado. Verifique o conteúdo e tente novamente.")
     else:
-        st.info(f"📦 {len(arquivos)} XML(s) encontrados.")
         progresso = st.progress(0, text="Iniciando...")
-        linhas, erros = [], []
+        linhas_nfe, linhas_eventos, linhas_erros = [], [], []
         total = len(arquivos)
 
-        for i, (nome, data) in enumerate(arquivos):
-            l, e = parse_xml_nfe(data, nome)
-            linhas.extend(l)
-            erros.extend(e)
+        for i, (pasta, nome, data) in enumerate(arquivos):
+            l, e, err = parse_xml_nfe(data, nome, pasta)
+            linhas_nfe.extend(l)
+            linhas_eventos.extend(e)
+            linhas_erros.extend(err)
             progresso.progress((i + 1) / total, text=f"Processando {i+1}/{total}: {nome[:60]}")
 
         progresso.empty()
 
-        df = pd.DataFrame(linhas, columns=COLUNAS)
-        df_erros = pd.DataFrame(erros)
+        df_nfe = pd.DataFrame(linhas_nfe, columns=COLUNAS)
+        df_eventos = pd.DataFrame(linhas_eventos, columns=COLUNAS_EVENTOS) if linhas_eventos else pd.DataFrame()
+        df_erros = pd.DataFrame(linhas_erros)
 
         st.success(
-            f"✅ Processados: {total} XML(s) | "
-            f"Linhas de itens: {len(df)} | "
-            f"Ignorados (cancelamentos/eventos): {len(df_erros)}"
+            f"✅ Total: {total} XML(s) | "
+            f"Notas fiscais: {len(df_nfe)} linhas | "
+            f"Eventos/cancelamentos: {len(df_eventos)} | "
+            f"Erros: {len(df_erros)}"
         )
 
-        st.dataframe(df, use_container_width=True, height=420)
+        tab1, tab2 = st.tabs(["📋 Notas Fiscais", "🚫 Eventos e Cancelamentos"])
 
-        excel = gerar_excel(df, df_erros)
+        with tab1:
+            st.dataframe(df_nfe, use_container_width=True, height=420)
+
+        with tab2:
+            if df_eventos.empty:
+                st.info("Nenhum evento ou cancelamento encontrado.")
+            else:
+                st.dataframe(df_eventos, use_container_width=True, height=420)
+
+        excel = gerar_excel(df_nfe, df_eventos, df_erros)
         st.download_button(
-            "⬇️ Baixar relatório Excel",
+            "⬇️ Baixar relatório Excel (todas as abas)",
             data=excel,
             file_name=f"relatorio_xml_nfe_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-
-        if not df_erros.empty:
-            with st.expander(f"Ver {len(df_erros)} arquivo(s) ignorado(s)"):
-                st.dataframe(df_erros, use_container_width=True)
