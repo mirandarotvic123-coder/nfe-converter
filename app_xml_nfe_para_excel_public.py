@@ -337,6 +337,23 @@ def estilo_aba(ws, cor="1F4E78"):
         cell.fill = cell.fill.copy(fill_type="solid", fgColor=cor)
 
 
+def colorir_duplicatas(ws):
+    """Pinta de vermelho claro as linhas onde coluna duplicada == Sim"""
+    from openpyxl.styles import PatternFill
+    fill_dup = PatternFill(fill_type="solid", fgColor="FFCCCC")
+    col_dup = None
+    for cell in ws[1]:
+        if cell.value == "duplicada":
+            col_dup = cell.column
+            break
+    if col_dup is None:
+        return
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+        if row[col_dup - 1].value == "Sim":
+            for cell in row:
+                cell.fill = fill_dup
+
+
 def gerar_excel(df_nfe, df_eventos, df_erros):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -347,8 +364,10 @@ def gerar_excel(df_nfe, df_eventos, df_erros):
             df_erros.to_excel(writer, index=False, sheet_name="Erros")
         wb = writer.book
         estilo_aba(wb["Notas_Fiscais"], "1F4E78")
+        colorir_duplicatas(wb["Notas_Fiscais"])
         if not df_eventos.empty:
             estilo_aba(wb["Eventos_Cancelamentos"], "7B2D00")
+            colorir_duplicatas(wb["Eventos_Cancelamentos"])
         if not df_erros.empty:
             estilo_aba(wb["Erros"], "5C0000")
     output.seek(0)
@@ -399,17 +418,15 @@ if uploaded:
         df_eventos = pd.DataFrame(linhas_eventos, columns=COLUNAS_EVENTOS) if linhas_eventos else pd.DataFrame(columns=COLUNAS_EVENTOS)
         df_erros = pd.DataFrame(linhas_erros)
 
-        # Deduplicação por chave de acesso + número do item (NF-e)
-        total_antes = len(df_nfe)
+        # Identificar duplicatas por chave de acesso + número do item (NF-e)
         if not df_nfe.empty:
-            df_nfe = df_nfe.drop_duplicates(subset=["chave_acesso", "n_item"], keep="first")
-        duplicadas_nfe = total_antes - len(df_nfe)
+            df_nfe.insert(0, "duplicada", df_nfe.duplicated(subset=["chave_acesso","n_item"], keep="first").map({True: "Sim", False: "Não"}))
+            duplicadas_nfe = int((df_nfe["duplicada"] == "Sim").sum()) if not df_nfe.empty else 0
 
-        # Deduplicação por chave + tipo de evento + protocolo
-        total_ev_antes = len(df_eventos)
+        # identificar duplicatas por chave + tipo de evento + protocolo
         if not df_eventos.empty:
-            df_eventos = df_eventos.drop_duplicates(subset=["chave_nfe", "tipo_evento", "numero_protocolo"], keep="first")
-        duplicadas_ev = total_ev_antes - len(df_eventos)
+            df_eventos.insert(0, "duplicada", df_eventos.duplicated(subset=["chave_nfe", "tipo_evento", "numero_protocolo"], keep="first").map({True: "Sim", False: "Não"}))
+            duplicadas_ev = int((df_eventos["duplicada"] == "Sim").sum()) if not df_eventos.empty else 0
 
         msg = (
             f"✅ Total: {total} XML(s) | "
@@ -418,7 +435,7 @@ if uploaded:
             f"Erros: {len(df_erros)}"
         )
         if duplicadas_nfe > 0 or duplicadas_ev > 0:
-            msg += f" | ⚠️ Duplicatas removidas: {duplicadas_nfe} notas + {duplicadas_ev} eventos"
+            msg += f" | ⚠️ Duplicatas encontradas: {duplicadas_nfe} notas + {duplicadas_ev} eventos (coluna 'duplicada' = Sim)"
         st.success(msg)
 
         tab1, tab2 = st.tabs(["📋 Notas Fiscais", "🚫 Eventos e Cancelamentos"])
