@@ -286,13 +286,12 @@ def gerar_excel(df, df_erros):
 st.set_page_config(page_title="Conversor XML NF-e para Excel", layout="wide")
 st.title("📄 Conversor de XML de notas fiscais para Excel")
 st.caption(
-    "Envie um **ZIP** com todos os XMLs (pode ter subpastas) "
-    "ou selecione **XMLs avulsos** diretamente. "
+    "Envie aqui os arquivos "
     "O relatório sai com uma linha por item da nota."
 )
 
 uploaded = st.file_uploader(
-    "Selecione um ZIP com os XMLs ou XMLs avulsos",
+    "Selecione os arquivos",
     type=["zip", "xml"],
     accept_multiple_files=True,
 )
@@ -307,7 +306,7 @@ if uploaded:
     if not arquivos:
         st.error("Nenhum arquivo .xml encontrado. Verifique o conteúdo e tente novamente.")
     else:
-        st.info(f"📦 {len(arquivos)} XML(s) encontrados. Processando...")
+        st.info(f"📦 {len(arquivos)} XML(s) encontrados.")
         progresso = st.progress(0, text="Iniciando...")
         linhas, erros = [], []
         total = len(arquivos)
