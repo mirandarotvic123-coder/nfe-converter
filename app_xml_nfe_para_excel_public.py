@@ -12,7 +12,7 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-COLUNAS = [
+COLUNAS_NFE = [
     'pasta', 'arquivo_xml', 'tipo_documento', 'chave_acesso', 'modelo', 'serie', 'numero_nf',
     'data_emissao', 'data_saida_entrada', 'tipo_operacao', 'natureza_operacao', 'finalidade',
     'ambiente', 'status_protocolo', 'protocolo_autorizacao', 'emitente_cnpj_cpf',
@@ -34,10 +34,24 @@ COLUNAS = [
 ]
 
 COLUNAS_EVENTOS = [
-    'pasta', 'arquivo_xml', 'tipo_evento', 'chave_nfe', 'cnpj_autor',
-    'data_evento', 'numero_protocolo', 'status_evento', 'descricao_status',
-    'justificativa'
+    'pasta', 'arquivo_xml', 'tipo_evento', 'descricao_evento',
+    'chave_nfe', 'cnpj_autor', 'ambiente',
+    'data_evento', 'data_registro',
+    'numero_protocolo', 'status_codigo', 'status_descricao',
+    'justificativa', 'texto_correcao',
 ]
+
+TIPOS_EVENTO = {
+    "110111": "Cancelamento",
+    "110110": "Carta de Correção",
+    "110112": "Cancelamento por Substituição",
+    "110114": "EPEC",
+    "210200": "Ciência da Operação",
+    "210210": "Confirmação da Operação",
+    "210220": "Desconhecimento da Operação",
+    "210240": "Operação não Realizada",
+    "610130": "Comprovante de Entrega CT-e",
+}
 
 
 def limpar_namespace(root):
@@ -83,70 +97,60 @@ def primeiro_filho(parent):
 
 
 def detectar_tipo(modelo):
-    if modelo == "55":
-        return "NF-e"
-    if modelo == "65":
-        return "NFC-e"
-    if modelo in {"57", "67"}:
-        return "CT-e/CT-e OS"
+    if modelo == "55": return "NF-e"
+    if modelo == "65": return "NFC-e"
+    if modelo in {"57", "67"}: return "CT-e/CT-e OS"
     return "XML fiscal"
 
 
-def parse_evento(xml_bytes, nome_arquivo, pasta):
-    """Extrai dados de XMLs de eventos (cancelamento, carta de correção, etc.)"""
-    try:
-        root = ET.fromstring(xml_bytes)
-        root = limpar_namespace(root)
-    except Exception:
-        return []
-
+def parse_evento(root, nome_arquivo, pasta):
     linhas = []
-    eventos = root.findall(".//infEvento")
-    for inf in eventos:
-        tipo_cod = txt(inf, "tpEvento")
-        tipo_desc = {
-            "110111": "Cancelamento",
-            "110110": "Carta de Correção",
-            "110112": "Cancelamento por Substituição",
-            "110114": "EPEC",
-            "210200": "Ciência da Operação",
-            "210210": "Confirmação da Operação",
-            "210220": "Desconhecimento da Operação",
-            "210240": "Operação não Realizada",
-        }.get(tipo_cod, f"Evento {tipo_cod}")
+    inf = root.find(".//infEvento")
+    if inf is None:
+        return linhas
 
-        det = inf.find("detEvento")
-        justificativa = txt(det, "xJust") if det is not None else ""
+    tipo_cod = txt(inf, "tpEvento")
+    tipo_desc = TIPOS_EVENTO.get(tipo_cod, f"Evento {tipo_cod}")
+    det = inf.find("detEvento")
+    desc_evento = txt(det, "descEvento") if det is not None else tipo_desc
+    justificativa = txt(det, "xJust") if det is not None else ""
+    texto_correcao = txt(det, "xCorrecao") if det is not None else ""
+    ambiente = {"1": "Produção", "2": "Homologação"}.get(txt(inf, "tpAmb"), txt(inf, "tpAmb"))
 
-        ret = root.find(".//infProt") or root.find(".//retEvento/infEvento")
+    ret = root.find(".//retEvento/infEvento")
 
-        linhas.append({
-            "pasta": pasta,
-            "arquivo_xml": nome_arquivo,
-            "tipo_evento": tipo_desc,
-            "chave_nfe": txt(inf, "chNFe"),
-            "cnpj_autor": txt(inf, "CNPJ") or txt(inf, "CPF"),
-            "data_evento": txt(inf, "dhEvento"),
-            "numero_protocolo": txt(ret, "nProt") if ret is not None else "",
-            "status_evento": txt(ret, "cStat") if ret is not None else "",
-            "descricao_status": txt(ret, "xMotivo") if ret is not None else "",
-            "justificativa": justificativa,
-        })
+    linhas.append({
+        "pasta": pasta,
+        "arquivo_xml": nome_arquivo,
+        "tipo_evento": tipo_desc,
+        "descricao_evento": desc_evento,
+        "chave_nfe": txt(inf, "chNFe"),
+        "cnpj_autor": cnpj_ou_cpf(inf),
+        "ambiente": ambiente,
+        "data_evento": txt(inf, "dhEvento"),
+        "data_registro": txt(ret, "dhRegEvento") if ret is not None else "",
+        "numero_protocolo": txt(ret, "nProt") if ret is not None else "",
+        "status_codigo": txt(ret, "cStat") if ret is not None else "",
+        "status_descricao": txt(ret, "xMotivo") if ret is not None else "",
+        "justificativa": justificativa,
+        "texto_correcao": texto_correcao,
+    })
     return linhas
 
 
 def parse_xml_nfe(xml_bytes, nome_arquivo, pasta):
+    """Retorna (linhas_nfe, linhas_eventos, linhas_erros)"""
     try:
         root = ET.fromstring(xml_bytes)
         root = limpar_namespace(root)
     except Exception as e:
         return [], [], [{"pasta": pasta, "arquivo_xml": nome_arquivo, "erro": f"XML inválido: {e}"}]
 
-    # Verificar se é evento
+    # É um evento?
     if root.find(".//infEvento") is not None:
-        eventos = parse_evento(xml_bytes, nome_arquivo, pasta)
-        return [], eventos, []
+        return [], parse_evento(root, nome_arquivo, pasta), []
 
+    # É uma NF-e?
     inf_nfe = root.find(".//infNFe")
     if inf_nfe is None:
         return [], [], [{"pasta": pasta, "arquivo_xml": nome_arquivo, "erro": "Formato não reconhecido."}]
@@ -233,7 +237,7 @@ def parse_xml_nfe(xml_bytes, nome_arquivo, pasta):
 
     detalhes = inf_nfe.findall("det")
     if not detalhes:
-        linha = {col: "" for col in COLUNAS}
+        linha = {col: "" for col in COLUNAS_NFE}
         linha.update(capa)
         return [linha], [], []
 
@@ -247,7 +251,7 @@ def parse_xml_nfe(xml_bytes, nome_arquivo, pasta):
         pis_grupo = primeiro_filho(imposto.find("PIS") if imposto is not None else None)
         cofins_grupo = primeiro_filho(imposto.find("COFINS") if imposto is not None else None)
 
-        linha = {col: "" for col in COLUNAS}
+        linha = {col: "" for col in COLUNAS_NFE}
         linha.update(capa)
         linha.update({
             "n_item": attr(det, "nItem"),
@@ -293,7 +297,6 @@ def parse_xml_nfe(xml_bytes, nome_arquivo, pasta):
 
 
 def ler_uploads(uploaded_files):
-    """Retorna lista de (pasta, nome_arquivo, bytes)"""
     arquivos = []
     for up in uploaded_files:
         data = up.read()
@@ -303,26 +306,25 @@ def ler_uploads(uploaded_files):
                 for item in zf.namelist():
                     if item.lower().endswith(".xml"):
                         pasta = os.path.dirname(item) or "raiz"
-                        nome_xml = os.path.basename(item)
-                        arquivos.append((pasta, nome_xml, zf.read(item)))
+                        arquivos.append((pasta, os.path.basename(item), zf.read(item)))
         elif nome.lower().endswith(".xml"):
             arquivos.append(("avulso", nome, data))
     return arquivos
 
 
-def estilo_aba(ws, cor_cabecalho="1F4E78"):
+def estilo_aba(ws, cor="1F4E78"):
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = ws.dimensions
     for col_cells in ws.columns:
         header = str(col_cells[0].value or "")
         max_len = max(len(str(c.value)) if c.value is not None else 0 for c in col_cells[:200])
         width = min(max(max_len + 2, 12), 42)
-        if any(x in header for x in ["descricao", "razao", "informacoes", "natureza", "justificativa"]):
+        if any(x in header for x in ["descricao", "razao", "informacoes", "natureza", "justificativa", "correcao", "status"]):
             width = 38
         ws.column_dimensions[col_cells[0].column_letter].width = width
     for cell in ws[1]:
         cell.font = cell.font.copy(bold=True, color="FFFFFF")
-        cell.fill = cell.fill.copy(fill_type="solid", fgColor=cor_cabecalho)
+        cell.fill = cell.fill.copy(fill_type="solid", fgColor=cor)
 
 
 def gerar_excel(df_nfe, df_eventos, df_erros):
@@ -333,14 +335,12 @@ def gerar_excel(df_nfe, df_eventos, df_erros):
             df_eventos.to_excel(writer, index=False, sheet_name="Eventos_Cancelamentos")
         if not df_erros.empty:
             df_erros.to_excel(writer, index=False, sheet_name="Erros")
-
         wb = writer.book
         estilo_aba(wb["Notas_Fiscais"], "1F4E78")
         if not df_eventos.empty:
             estilo_aba(wb["Eventos_Cancelamentos"], "7B2D00")
         if not df_erros.empty:
             estilo_aba(wb["Erros"], "5C0000")
-
     output.seek(0)
     return output
 
@@ -385,8 +385,8 @@ if uploaded:
 
         progresso.empty()
 
-        df_nfe = pd.DataFrame(linhas_nfe, columns=COLUNAS)
-        df_eventos = pd.DataFrame(linhas_eventos, columns=COLUNAS_EVENTOS) if linhas_eventos else pd.DataFrame()
+        df_nfe = pd.DataFrame(linhas_nfe, columns=COLUNAS_NFE)
+        df_eventos = pd.DataFrame(linhas_eventos, columns=COLUNAS_EVENTOS) if linhas_eventos else pd.DataFrame(columns=COLUNAS_EVENTOS)
         df_erros = pd.DataFrame(linhas_erros)
 
         st.success(
@@ -405,7 +405,10 @@ if uploaded:
             if df_eventos.empty:
                 st.info("Nenhum evento ou cancelamento encontrado.")
             else:
-                st.dataframe(df_eventos, use_container_width=True, height=420)
+                # Resumo por tipo
+                resumo = df_eventos.groupby("tipo_evento").size().reset_index(name="quantidade")
+                st.dataframe(resumo, use_container_width=True, hide_index=True)
+                st.dataframe(df_eventos, use_container_width=True, height=380)
 
         excel = gerar_excel(df_nfe, df_eventos, df_erros)
         st.download_button(
