@@ -297,9 +297,7 @@ def parse_xml_nfe(xml_bytes, nome_arquivo, pasta):
 
 
 def ler_uploads(uploaded_files):
-    import hashlib
     arquivos = []
-    hashes_vistos = set()
     for up in uploaded_files:
         data = up.read()
         nome = up.name
@@ -308,18 +306,12 @@ def ler_uploads(uploaded_files):
                 for item in zf.namelist():
                     if item.lower().endswith(".xml"):
                         conteudo = zf.read(item)
-                        h = hashlib.md5(conteudo).hexdigest()
-                        if h in hashes_vistos:
-                            continue
-                        hashes_vistos.add(h)
                         pasta = os.path.dirname(item) or "raiz"
                         arquivos.append((pasta, os.path.basename(item), conteudo))
         elif nome.lower().endswith(".xml"):
-            h = hashlib.md5(data).hexdigest()
-            if h not in hashes_vistos:
-                hashes_vistos.add(h)
-                arquivos.append(("avulso", nome, data))
+            arquivos.append(("avulso",nome, data))
     return arquivos
+      
 
 
 def estilo_aba(ws, cor="1F4E78"):
@@ -418,15 +410,18 @@ if uploaded:
         df_eventos = pd.DataFrame(linhas_eventos, columns=COLUNAS_EVENTOS) if linhas_eventos else pd.DataFrame(columns=COLUNAS_EVENTOS)
         df_erros = pd.DataFrame(linhas_erros)
 
-        # Identificar duplicatas por chave de acesso + número do item (NF-e)
+        # Identificar duplicatas: mesma chave de acesso + mesmo número da NF
+        # Uma NF duplicada vai aparecer em múltiplas linhas (uma por item),
+        # por isso marcamos todas as linhas do segundo XML em diante
         if not df_nfe.empty:
-            df_nfe.insert(0, "duplicada", df_nfe.duplicated(subset=["chave_acesso","n_item"], keep="first").map({True: "Sim", False: "Não"}))
-            duplicadas_nfe = int((df_nfe["duplicada"] == "Sim").sum()) if not df_nfe.empty else 0
+            # Marca TRUE a partir da 2a ocorrência da mesma chave_acesso
+            df_nfe.insert(0, "duplicada", df_nfe.duplicated(subset=["chave_acesso"], keep="first").map({True: "Sim", False: "Não"}))
+        duplicadas_nfe = int((df_nfe["duplicada"] == "Sim").sum()) if not df_nfe.empty else 0
 
-        # identificar duplicatas por chave + tipo de evento + protocolo
+        # Eventos: mesma chave + mesmo tipo + mesmo protocolo
         if not df_eventos.empty:
             df_eventos.insert(0, "duplicada", df_eventos.duplicated(subset=["chave_nfe", "tipo_evento", "numero_protocolo"], keep="first").map({True: "Sim", False: "Não"}))
-            duplicadas_ev = int((df_eventos["duplicada"] == "Sim").sum()) if not df_eventos.empty else 0
+        duplicadas_ev = int((df_eventos["duplicada"] == "Sim").sum()) if not df_eventos.empty else 0
 
         msg = (
             f"✅ Total: {total} XML(s) | "
