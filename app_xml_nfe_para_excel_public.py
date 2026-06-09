@@ -410,9 +410,16 @@ if uploaded:
         df_eventos = pd.DataFrame(linhas_eventos, columns=COLUNAS_EVENTOS) if linhas_eventos else pd.DataFrame(columns=COLUNAS_EVENTOS)
         df_erros = pd.DataFrame(linhas_erros)
 
-        # Identificar duplicatas: arquivo_xml + numero_nf + tipo_operacao + n_item + codigo_produto
+        # Identificar duplicatas:
+        # A chave_acesso é o identificador único fiscal da NF-e (44 dígitos).
+        # Combinada com n_item e codigo_produto garante que só é duplicata
+        # quando o exato mesmo item da exata mesma nota aparece mais de uma vez.
+        # arquivo_xml e numero_nf NÃO são usados: dois XMLs distintos podem ter
+        # o mesmo nome de arquivo ou mesmo número de NF de emitentes diferentes.
         if not df_nfe.empty:
-            df_nfe.insert(0, "duplicada", df_nfe.duplicated(subset=["arquivo_xml", "numero_nf", "tipo_operacao", "n_item", "codigo_produto"], keep="first").map({True: "Sim", False: "Não"}))
+            df_nfe.insert(0, "duplicada", df_nfe.duplicated(
+                subset=["chave_acesso", "n_item", "codigo_produto"], keep="first"
+            ).map({True: "Sim", False: "Não"}))
         duplicadas_nfe = int((df_nfe["duplicada"] == "Sim").sum()) if not df_nfe.empty else 0
 
         # Eventos: mesma chave + mesmo tipo + mesmo protocolo
