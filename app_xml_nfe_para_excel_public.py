@@ -410,11 +410,9 @@ if uploaded:
         df_eventos = pd.DataFrame(linhas_eventos, columns=COLUNAS_EVENTOS) if linhas_eventos else pd.DataFrame(columns=COLUNAS_EVENTOS)
         df_erros = pd.DataFrame(linhas_erros)
 
-        # Identificar duplicatas: mesma chave de acesso + mesmo n_item + mesmo codigo_produto
-        # Os três campos juntos garantem que só é duplicata quando o item é exatamente o mesmo,
-        # evitando falsos positivos entre notas distintas que compartilham n_item iguais (ex: ambas têm item 1, 2...)
+        # Identificar duplicatas: arquivo_xml + numero_nf + tipo_operacao + n_item + codigo_produto
         if not df_nfe.empty:
-            df_nfe.insert(0, "duplicada", df_nfe.duplicated(subset=["chave_acesso", "n_item", "codigo_produto"], keep="first").map({True: "Sim", False: "Não"}))
+            df_nfe.insert(0, "duplicada", df_nfe.duplicated(subset=["arquivo_xml", "numero_nf", "tipo_operacao", "n_item", "codigo_produto"], keep="first").map({True: "Sim", False: "Não"}))
         duplicadas_nfe = int((df_nfe["duplicada"] == "Sim").sum()) if not df_nfe.empty else 0
 
         # Eventos: mesma chave + mesmo tipo + mesmo protocolo
