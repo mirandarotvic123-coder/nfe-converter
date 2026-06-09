@@ -372,7 +372,7 @@ st.set_page_config(page_title="Conversor XML NF-e para Excel - Countout Co.", la
 st.title("📄 Conversor de XML de notas fiscais para Excel - Countout Co.")
 st.caption("Envie aqui os arquivos. O relatório sai com uma linha por item da nota.")
 st.caption("Caso encontre notas duplicadas, filtre a coluna 'duplicada = Sim' e exclua essas linhas.")
-st.caption(""Dessa maneira ficará apenas um arquivo correto. Bem bunitin e padrão Countout hehe :smile:" )
+st.caption(""Dessa maneira ficará apenas um arquivo correto. Bem bunitin e padrão Countout hehe" )
            
 
 if "upload_key" not in st.session_state:
