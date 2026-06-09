@@ -370,9 +370,10 @@ def gerar_excel(df_nfe, df_eventos, df_erros):
 
 st.set_page_config(page_title="Conversor XML NF-e para Excel - Countout Co.", layout="wide")
 st.title("📄 Conversor de XML de notas fiscais para Excel - Countout Co.")
-st.caption("Envie aqui os arquivos. O relatório sai com uma linha por item da nota."
-            "Caso encontre notas duplicadas, apenas filtre a opção SIM e exclua todas as linhas."
-           "Dessa maneira ficará apenas um arquivo correto. Bem bunitin e padrão Countout hehe 😁" )
+st.caption("Envie aqui os arquivos. O relatório sai com uma linha por item da nota.")
+st.caption("Caso encontre notas duplicadas, filtre a coluna 'duplicada = Sim' e exclua essas linhas.")
+st.caption(""Dessa maneira ficará apenas um arquivo correto. Bem bunitin e padrão Countout hehe 😁" )
+           
 
 if "upload_key" not in st.session_state:
     st.session_state.upload_key = 0
